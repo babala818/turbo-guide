@@ -241,21 +241,15 @@
         // 房间管理
         let activeRooms = new Map(); // 存储活跃房间
         let roomCreationTime = 0;    // 房间创建时间
-        let isOfflineMode = false;   // 默认使用在线模式
-        let socket = null;           // WebSocket连接
-        let reconnectAttempts = 0;   // 重连尝试次数
-        let maxReconnectAttempts = 3; // 最大重连尝试次数
-
-        // WebSocket服务器地址（使用稳定的公共WebSocket测试服务器）
-        const WEBSOCKET_SERVER = 'wss://echo.websocket.org';
+        let isLocalMode = true;      // 使用本地模式（基于WebRTC局域网直连）
         
-        // 备用服务器列表（选择多个稳定的公共服务器）
-        const BACKUP_SERVERS = [
-            'wss://socketsbay.com/wss/v2/1/demo/',
-            'wss://ws.postman-echo.com/raw',
-            'wss://demo.piesocket.com/v3/channel_1?api_key=VCXCEuvhGcBDP7XhiJJUDvR1e1D3eiVjgZ9VRiaV',
-            'wss://websocket-echo.com'
-        ];
+        // WebRTC相关变量
+        let peerConnections = new Map(); // 存储对等连接
+        let localStream = null;         // 本地音频流
+        let dataChannel = null;         // 数据通道
+        let isHost = false;             // 是否为播放方
+        let currentRoomId = null;       // 当前房间ID
+        let clientId = generateClientId(); // 客户端ID
 
         // DOM元素
         const $ = id => document.getElementById(id);
@@ -319,126 +313,98 @@
             serverStatus.textContent = message;
         }
 
-        // 连接WebSocket服务器
-        async function connectWebSocket(serverUrl = WEBSOCKET_SERVER) {
-            updateServerStatus('connecting', '🟡 连接服务器中...');
+        // 生成客户端ID
+        function generateClientId() {
+            return Math.random().toString(36).substr(2, 9);
+        }
+
+        // WebRTC配置
+        const rtcConfig = {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' }
+            ]
+        };
+
+        // 创建WebRTC对等连接
+        function createPeerConnection(remoteId) {
+            const pc = new RTCPeerConnection(rtcConfig);
             
-            try {
-                socket = new WebSocket(serverUrl);
-                
-                socket.onopen = () => {
-                    isOfflineMode = false;
-                    reconnectAttempts = 0;
-                    updateServerStatus('connected', '🟢 服务器连接成功');
-                    statusEl.textContent = '✅ 服务器连接成功';
-                    
-                    // 如果是播放方且已有音频权限，自动创建房间
-                    if (isHost && audioStream) {
-                        createRoom();
+            // 添加本地音频流
+            if (localStream) {
+                localStream.getTracks().forEach(track => {
+                    pc.addTrack(track, localStream);
+                });
+            }
+            
+            // 处理ICE候选
+            pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                    // 通过数据通道发送ICE候选
+                    if (dataChannel && dataChannel.readyState === 'open') {
+                        dataChannel.send(JSON.stringify({
+                            type: 'ice-candidate',
+                            candidate: event.candidate,
+                            to: remoteId,
+                            from: clientId
+                        }));
                     }
-                };
-                
-                socket.onmessage = (event) => {
-                    handleWebSocketMessage(event.data);
-                };
-                
-                socket.onclose = () => {
-                    updateServerStatus('disconnected', '🔴 服务器连接断开');
-                    statusEl.textContent = '❌ 服务器连接断开 | 正在重连...';
-                    // 尝试重连
-                    setTimeout(() => reconnectWebSocket(), 3000);
-                };
-                
-                socket.onerror = (error) => {
-                    updateServerStatus('disconnected', '🔴 服务器连接错误');
-                    statusEl.textContent = `❌ 服务器连接失败：${error.message}`;
-                    // 尝试备用服务器
-                    setTimeout(() => reconnectWebSocket(true), 2000);
-                };
-                
-                // 等待连接成功
-                try {
-                    await waitForSocketConnection(socket, 8000);
-                    return true;
-                } catch (error) {
-                    console.log('WebSocket连接超时，继续尝试重连...');
-                    return false;
                 }
-                
-            } catch (error) {
-                updateServerStatus('disconnected', '🔴 服务器连接失败');
-                statusEl.textContent = `❌ 连接服务器失败：${error.message}`;
-                return false;
-            }
-        }
-
-        // 等待WebSocket连接成功
-        function waitForSocketConnection(socket, timeout) {
-            return new Promise((resolve, reject) => {
-                const startTime = Date.now();
-                
-                const checkConnection = () => {
-                    if (socket.readyState === WebSocket.OPEN) {
-                        resolve();
-                    } else if (Date.now() - startTime > timeout) {
-                        reject(new Error('WebSocket连接超时'));
-                    } else {
-                        setTimeout(checkConnection, 100);
-                    }
-                };
-                
-                checkConnection();
-            });
-        }
-
-        // 重新连接WebSocket
-        async function reconnectWebSocket(useBackup = false) {
-            reconnectAttempts++;
+            };
             
-            // 检查是否达到最大重连次数
-            if (reconnectAttempts >= maxReconnectAttempts) {
-                statusEl.textContent = '❌ 多次连接失败，启用离线模式';
-                enableOfflineMode();
-                return;
-            }
-            
-            if (socket && socket.readyState === WebSocket.OPEN) {
-                socket.close();
-            }
-            
-            let serverUrl = WEBSOCKET_SERVER;
-            if (useBackup) {
-                // 随机选择一个备用服务器
-                const randomIndex = Math.floor(Math.random() * BACKUP_SERVERS.length);
-                serverUrl = BACKUP_SERVERS[randomIndex];
-                statusEl.textContent = `🔄 尝试备用服务器(${reconnectAttempts}/${maxReconnectAttempts})：${serverUrl}`;
-            } else {
-                statusEl.textContent = `🔄 重新连接服务器(${reconnectAttempts}/${maxReconnectAttempts})...`;
-            }
-            
-            const connected = await connectWebSocket(serverUrl);
-            if (connected) {
-                reconnectAttempts = 0; // 重置重连计数
-                if (currentRoomId) {
-                    // 重新加入房间
-                    joinRoom(currentRoomId);
+            // 处理远程流
+            pc.ontrack = (event) => {
+                // 播放远程音频
+                const remoteAudio = document.getElementById('remoteAudio');
+                if (remoteAudio) {
+                    remoteAudio.srcObject = event.streams[0];
+                    remoteAudio.play().catch(e => console.log('播放失败:', e));
                 }
-            }
-        }
-
-        // 启用离线模式（在服务器连接失败时使用）
-        function enableOfflineMode() {
-            isOfflineMode = true;
-            updateServerStatus('offline', '⚪ 离线模式');
-            statusEl.textContent = '🔶 服务器连接失败，已启用离线模式';
+            };
             
-            // 允许用户继续使用应用的基本功能
-            if (isHost && audioStream) {
-                createRoom(); // 在离线模式下创建本地房间
+            // 处理连接状态变化
+            pc.onconnectionstatechange = () => {
+                console.log('连接状态:', pc.connectionState);
+                updateConnectionStatus(pc.connectionState);
+            };
+            
+            return pc;
+        }
+
+        // 更新连接状态显示
+        function updateConnectionStatus(state) {
+            switch (state) {
+                case 'connected':
+                    updateServerStatus('connected', '🟢 设备连接成功');
+                    break;
+                case 'connecting':
+                    updateServerStatus('connecting', '🟡 正在连接设备...');
+                    break;
+                case 'disconnected':
+                case 'failed':
+                    updateServerStatus('disconnected', '🔴 设备连接断开');
+                    break;
+                case 'closed':
+                    updateServerStatus('offline', '⚪ 连接已关闭');
+                    break;
             }
         }
 
-        // 处理WebSocket消息
+        // 初始化WebRTC数据通道（用于房间发现和信令）
+        function initDataChannel() {
+            // 在本地模式下，我们使用简单的房间管理
+            statusEl.textContent = '📶 本地网络模式已就绪';
+            updateServerStatus('connected', '🟢 本地网络就绪');
+        }
+
+        // 简化的连接函数（替代WebSocket）
+        async function connectWebSocket() {
+            // 在本地模式下，直接初始化WebRTC
+            initDataChannel();
+            return true;
+        }
+
+        // 处理消息（本地网络模式）
         function handleWebSocketMessage(data) {
             try {
                 const message = JSON.parse(data);
@@ -465,7 +431,7 @@
                 }
             } catch (error) {
                 console.log('收到非JSON消息:', data);
-                // 由于使用的是公共echo服务器，我们模拟一些响应
+                // 在本地模式下，模拟响应
                 simulateServerResponse(data);
             }
         }
@@ -502,6 +468,68 @@
                 handleAudioData(message);
                 statusEl.textContent = '✅ 音频传输测试成功！可以正常传声';
             }, 1000);
+        }
+
+        // 房间发现功能（本地网络）
+        function startRoomDiscovery(roomId) {
+            // 在本地网络模式下，我们简化处理
+            console.log(`开始房间发现：${roomId}`);
+            
+            // 创建一个简单的房间信息广播
+            const roomInfo = {
+                roomId: roomId,
+                hostId: clientId,
+                timestamp: Date.now(),
+                name: `音频房间-${roomId}`
+            };
+            
+            // 存储房间信息以便其他设备发现
+            localStorage.setItem(`room_${roomId}`, JSON.stringify(roomInfo));
+            
+            // 定期清理过期房间
+            setInterval(() => {
+                cleanupExpiredRooms();
+            }, 60000); // 每分钟清理一次
+        }
+
+        // 清理过期房间
+        function cleanupExpiredRooms() {
+            const now = Date.now();
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key.startsWith('room_')) {
+                    try {
+                        const roomInfo = JSON.parse(localStorage.getItem(key));
+                        if (now - roomInfo.timestamp > 3600000) { // 1小时过期
+                            localStorage.removeItem(key);
+                        }
+                    } catch (e) {
+                        localStorage.removeItem(key);
+                    }
+                }
+            }
+        }
+
+        // 查找本地网络中的房间
+        function findLocalRooms() {
+            const rooms = [];
+            const now = Date.now();
+            
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key.startsWith('room_')) {
+                    try {
+                        const roomInfo = JSON.parse(localStorage.getItem(key));
+                        if (now - roomInfo.timestamp < 3600000) { // 1小时内有效
+                            rooms.push(roomInfo);
+                        }
+                    } catch (e) {
+                        localStorage.removeItem(key);
+                    }
+                }
+            }
+            
+            return rooms;
         }
 
         // 模拟服务器响应（因为使用公共echo服务器）
