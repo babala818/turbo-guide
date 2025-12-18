@@ -929,6 +929,9 @@
             statusEl.textContent = '✅ 应用初始化完成 | 请选择角色';
             // 显示音频测试控件
             audioTestControls.style.display = 'flex';
+            
+            // 尝试连接WebSocket服务器
+            connectWebSocket();
         };
 
         // 添加全局点击监听器（解决自动播放限制）
