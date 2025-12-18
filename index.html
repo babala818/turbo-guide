@@ -241,14 +241,17 @@
         // 房间管理
         let activeRooms = new Map(); // 存储活跃房间
         let roomCreationTime = 0;    // 房间创建时间
+        let isOfflineMode = false;   // 离线模式标志
+        let reconnectAttempts = 0;   // 重连尝试次数
+        let maxReconnectAttempts = 5; // 最大重连尝试次数
 
         // WebSocket服务器地址（使用公共的WebSocket测试服务器）
-        const WEBSOCKET_SERVER = 'wss://echo.websocket.org';
+        const WEBSOCKET_SERVER = 'wss://ws.postman-echo.com/raw';
         
         // 备用服务器列表
         const BACKUP_SERVERS = [
-            'wss://ws.postman-echo.com/raw',
-            'wss://websocket-echo.com'
+            'wss://websocket-echo.com',
+            'wss://echo.websocket.org'
         ];
 
         // DOM元素
@@ -321,6 +324,7 @@
                 socket = new WebSocket(serverUrl);
                 
                 socket.onopen = () => {
+                    isOfflineMode = false;
                     updateServerStatus('connected', '🟢 服务器连接成功');
                     statusEl.textContent = '✅ 服务器连接成功';
                     
@@ -349,8 +353,14 @@
                 };
                 
                 // 等待连接成功
-                await waitForSocketConnection(socket, 5000);
-                return true;
+                try {
+                    await waitForSocketConnection(socket, 10000); // 增加超时时间到10秒
+                    return true;
+                } catch (error) {
+                    console.log('WebSocket连接超时，继续尝试重连...');
+                    // 不在这里返回失败，让重连机制处理
+                    return false;
+                }
                 
             } catch (error) {
                 updateServerStatus('disconnected', '🔴 服务器连接失败');
@@ -380,6 +390,15 @@
 
         // 重新连接WebSocket
         async function reconnectWebSocket(useBackup = false) {
+            reconnectAttempts++;
+            
+            // 检查是否达到最大重连次数
+            if (reconnectAttempts >= maxReconnectAttempts) {
+                statusEl.textContent = '❌ 多次连接失败，启用离线模式';
+                enableOfflineMode();
+                return;
+            }
+            
             if (socket && socket.readyState === WebSocket.OPEN) {
                 socket.close();
             }
@@ -389,13 +408,18 @@
                 // 随机选择一个备用服务器
                 const randomIndex = Math.floor(Math.random() * BACKUP_SERVERS.length);
                 serverUrl = BACKUP_SERVERS[randomIndex];
-                statusEl.textContent = `🔄 尝试备用服务器：${serverUrl}`;
+                statusEl.textContent = `🔄 尝试备用服务器(${reconnectAttempts}/${maxReconnectAttempts})：${serverUrl}`;
+            } else {
+                statusEl.textContent = `🔄 重新连接服务器(${reconnectAttempts}/${maxReconnectAttempts})...`;
             }
             
             const connected = await connectWebSocket(serverUrl);
-            if (connected && currentRoomId) {
-                // 重新加入房间
-                joinRoom(currentRoomId);
+            if (connected) {
+                reconnectAttempts = 0; // 重置重连计数
+                if (currentRoomId) {
+                    // 重新加入房间
+                    joinRoom(currentRoomId);
+                }
             }
         }
 
@@ -931,7 +955,9 @@
             audioTestControls.style.display = 'flex';
             
             // 尝试连接WebSocket服务器
-            connectWebSocket();
+            setTimeout(() => {
+                connectWebSocket();
+            }, 1000);
         };
 
         // 添加全局点击监听器（解决自动播放限制）
