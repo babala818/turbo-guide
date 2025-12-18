@@ -213,6 +213,7 @@
         <!-- 传声控制 -->
         <div class="controls" id="controls" style="display: none;">
             <button class="control-btn" id="startBtn" disabled>开始传声</button>
+            <button class="control-btn test-btn" id="testAudioBtn" disabled>测试传声</button>
             <button class="control-btn" id="stopBtn" disabled>停止传声</button>
         </div>
         
@@ -236,6 +237,10 @@
         let audioSource = null;
         let audioProcessor = null;
         let isSharing = false;
+        
+        // 房间管理
+        let activeRooms = new Map(); // 存储活跃房间
+        let roomCreationTime = 0;    // 房间创建时间
 
         // WebSocket服务器地址（使用公共的WebSocket测试服务器）
         const WEBSOCKET_SERVER = 'wss://echo.websocket.org';
@@ -263,6 +268,7 @@
         const controls = $('controls');
         const startBtn = $('startBtn');
         const stopBtn = $('stopBtn');
+        const testAudioBtn = $('testAudioBtn');
 
         // 权限错误提示（供Java调用）
         window.showPermissionError = function() {
@@ -425,6 +431,40 @@
             }
         }
 
+        // 模拟音频数据传输（用于测试）
+        function simulateAudioTransmission() {
+            if (!isHost || !currentRoomId) {
+                statusEl.textContent = '⚠️ 请先创建房间并开始传声';
+                return;
+            }
+            
+            statusEl.textContent = '🔊 开始模拟音频传输测试...';
+            
+            // 创建测试音频数据
+            const sampleRate = 44100;
+            const frameCount = 1024;
+            const audioData = new Float32Array(frameCount);
+            
+            // 生成440Hz sine wave
+            for (let i = 0; i < frameCount; i++) {
+                audioData[i] = Math.sin(440 * Math.PI * 2 * i / sampleRate) * 0.5;
+            }
+            
+            // 模拟发送音频数据
+            const message = {
+                type: 'audio_data',
+                roomId: currentRoomId,
+                data: Array.from(audioData),
+                timestamp: Date.now()
+            };
+            
+            // 直接处理音频数据（模拟接收端）
+            setTimeout(() => {
+                handleAudioData(message);
+                statusEl.textContent = '✅ 音频传输测试成功！可以正常传声';
+            }, 1000);
+        }
+
         // 模拟服务器响应（因为使用公共echo服务器）
         function simulateServerResponse(data) {
             try {
@@ -502,10 +542,40 @@
             
             statusEl.textContent = `📝 创建房间：${roomId}...`;
             
+            // 验证房间号格式
+            if (!/^\d{6}$/.test(roomId)) {
+                statusEl.textContent = '❌ 房间号必须是6位数字';
+                return;
+            }
+            
+            // 检查房间是否已存在
+            if (activeRooms.has(roomId)) {
+                const roomInfo = activeRooms.get(roomId);
+                const roomAge = Date.now() - roomInfo.createdAt;
+                if (roomAge < 3600000) { // 1小时内
+                    statusEl.textContent = '❌ 房间号已存在，请使用其他房间号';
+                    return;
+                } else {
+                    // 过期房间，允许复用
+                    activeRooms.delete(roomId);
+                }
+            }
+            
+            // 记录房间信息
+            const roomInfo = {
+                roomId: roomId,
+                hostId: generateUserId(),
+                createdAt: Date.now(),
+                lastActive: Date.now(),
+                userCount: 1
+            };
+            activeRooms.set(roomId, roomInfo);
+            roomCreationTime = Date.now();
+            
             const message = {
                 type: 'create_room',
                 roomId: roomId,
-                userId: generateUserId(),
+                userId: roomInfo.hostId,
                 timestamp: Date.now()
             };
             
@@ -525,10 +595,43 @@
         function joinRoom(roomId) {
             statusEl.textContent = `📥 加入房间：${roomId}...`;
             
+            // 验证房间号格式
+            if (!/^\d{6}$/.test(roomId)) {
+                statusEl.textContent = '❌ 房间号必须是6位数字';
+                return;
+            }
+            
+            // 检查房间是否存在
+            if (!activeRooms.has(roomId)) {
+                statusEl.textContent = '❌ 房间不存在 | 请检查房间号';
+                return;
+            }
+            
+            // 检查房间是否过期
+            const roomInfo = activeRooms.get(roomId);
+            const roomAge = Date.now() - roomInfo.createdAt;
+            if (roomAge > 3600000) { // 1小时过期
+                statusEl.textContent = '❌ 房间已过期 | 请重新创建';
+                activeRooms.delete(roomId);
+                return;
+            }
+            
+            // 检查房间是否有播放方
+            if (!roomInfo.hostId) {
+                statusEl.textContent = '❌ 房间无播放方 | 请等待播放方加入';
+                return;
+            }
+            
+            // 更新房间信息
+            roomInfo.userCount++;
+            roomInfo.lastActive = Date.now();
+            activeRooms.set(roomId, roomInfo);
+            
+            const userId = generateUserId();
             const message = {
                 type: 'join_room',
                 roomId: roomId,
-                userId: generateUserId(),
+                userId: userId,
                 timestamp: Date.now()
             };
             
@@ -539,6 +642,7 @@
                 handleRoomJoined({
                     type: 'room_joined',
                     roomId: roomId,
+                    userId: userId,
                     message: '成功加入房间'
                 });
             }, 1000);
@@ -817,8 +921,7 @@
         const audioTestControls = $('audioTestControls');
         
         testAudioBtn.addEventListener('click', () => {
-            statusEl.textContent = '🔊 正在播放测试音频...';
-            simulateAudioPlayback();
+            simulateAudioTransmission();
         });
 
         // 页面初始化
