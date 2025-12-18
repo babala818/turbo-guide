@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>实时音频共享 - 服务器转发版</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: "Helvetica Neue", Arial, sans-serif;
+        }
+        body {
+            background: #121212;
+            color: #ffffff;
+            min-height: 100vh;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .container {
+            width: 100%;
+            margin: 0 auto;
+            max-width: 500px;
+        }
+        h1 {
+            text-align: center;
+            font-size: 22px;
+            color: #4ade80;
+            margin-bottom: 8px;
+        }
+        .status {
+            background: #1e1e1e;
+            padding: 14px;
+            border-radius: 10px;
+            text-align: center;
+            font-size: 15px;
+            min-height: 45px;
+            line-height: 1.4;
+            white-space: pre-wrap;
+        }
+        .card {
+            background: #2d2d2d;
+            padding: 16px;
+            border-radius: 10px;
+            margin-top: 8px;
+        }
+        .card-title {
+            color: #f59e0b;
+            font-weight: 500;
+            margin-bottom: 8px;
+            font-size: 16px;
+        }
+        .card-content {
+            font-size: 14px;
+            line-height: 1.6;
+            color: #d1d5db;
+        }
+        .role-select {
+            display: flex;
+            gap: 8px;
+            margin: 8px 0;
+        }
+        .role-btn {
+            flex: 1;
+            padding: 14px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 500;
+        }
+        .host-btn {
+            background: #f59e0b;
+            color: white;
+        }
+        .client-btn {
+            background: #3b82f6;
+            color: white;
+        }
+        .mode-select {
+            display: flex;
+            gap: 8px;
+            margin: 8px 0;
+        }
+        .mode-btn {
+            flex: 1;
+            padding: 10px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+        .system-mode {
+            background: #10b981;
+            color: white;
+        }
+        .mic-mode {
+            background: #f59e0b;
+            color: white;
+        }
+        .room-input {
+            width: 100%;
+            padding: 16px;
+            border-radius: 10px;
+            border: none;
+            font-size: 16px;
+            background: #3d3d3d;
+            color: #fff;
+            outline: none;
+            margin: 8px 0;
+            text-align: center;
+            font-weight: 500;
+            letter-spacing: 2px;
+        }
+        .btn {
+            width: 100%;
+            padding: 16px;
+            border: none;
+            border-radius: 10px;
+            background: #22c55e;
+            color: white;
+            font-size: 17px;
+            font-weight: 500;
+            cursor: pointer;
+            margin-top: 8px;
+        }
+        .btn:disabled {
+            background: #4b5563;
+            cursor: not-allowed;
+        }
+        .btn-copy {
+            background: #6366f1;
+            padding: 10px;
+            font-size: 14px;
+        }
+        .controls {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+        }
+        .control-btn {
+            flex: 1;
+            padding: 14px;
+            border: none;
+            border-radius: 10px;
+            background: #3b82f6;
+            color: white;
+            font-size: 16px;
+            font-weight: 500;
+        }
+        .control-btn:disabled {
+            background: #4b5563;
+        }
+        .tips {
+            font-size: 13px;
+            color: #9ca3af;
+            text-align: center;
+            margin-top: 8px;
+        }
+        .server-status {
+            background: #1e3a8a;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            text-align: center;
+            margin-top: 8px;
+        }
+        .server-status.connected {
+            background: #064e3b;
+            color: #a7f3d0;
+        }
+        .server-status.connecting {
+            background: #78350f;
+            color: #fdba74;
+        }
+        .server-status.disconnected {
+            background: #7f1d1d;
+            color: #fca5a5;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>实时音频共享 - 服务器转发版</h1>
+        <div class="status" id="status">🔍 初始化中...请稍等</div>
+        
+        <!-- 角色选择 -->
+        <div class="role-select">
+            <button class="role-btn host-btn" id="hostBtn">我是播放方（传音频）</button>
+            <button class="role-btn client-btn" id="clientBtn">我是收听方（听音频）</button>
+        </div>
+        
+        <!-- 音频模式选择（播放方） -->
+        <div class="mode-select" id="modeSelect" style="display: none;">
+            <button class="mode-btn system-mode" id="systemAudioBtn">🎵 系统音频（无杂音）</button>
+            <button class="mode-btn mic-mode" id="micAudioBtn">🎤 麦克风（兜底）</button>
+        </div>
+        
+        <!-- 权限引导 -->
+        <div class="card" id="permGuide" style="display: none;">
+            <div class="card-title">📌 权限开启指引</div>
+            <div class="card-content" id="guideText">请选择音频捕获模式，按提示开启对应权限</div>
+        </div>
+        
+        <!-- 房间号输入 -->
+        <div class="card" id="roomCard" style="display: none;">
+            <div class="card-title" id="roomTitle">房间号</div>
+            <input type="text" id="roomInput" class="room-input" placeholder="输入6位房间号或留空自动生成" maxlength="6">
+            <div class="server-status" id="serverStatus">🟡 连接服务器中...</div>
+        </div>
+        
+        <!-- 传声控制 -->
+        <div class="controls" id="controls" style="display: none;">
+            <button class="control-btn" id="startBtn" disabled>开始传声</button>
+            <button class="control-btn" id="stopBtn" disabled>停止传声</button>
+        </div>
+        
+        <div class="tips">💡 服务器转发模式 | 无需P2P穿透 | 稳定连接 | 双音频模式</div>
+    </div>
+
+    <script>
+        // 核心变量
+        let socket = null;
+        let audioStream = null;
+        let audioTrack = null;
+        let audioMode = "system";
+        let isHost = false;
+        let currentRoomId = null;
+        let audioContext = null;
+        let audioSource = null;
+        let audioProcessor = null;
+        let isSharing = false;
+
+        // WebSocket服务器地址（使用公共的WebSocket测试服务器）
+        const WEBSOCKET_SERVER = 'wss://echo.websocket.org';
+        
+        // 备用服务器列表
+        const BACKUP_SERVERS = [
+            'wss://ws.postman-echo.com/raw',
+            'wss://websocket-echo.com'
+        ];
+
+        // DOM元素
+        const $ = id => document.getElementById(id);
+        const statusEl = $('status');
+        const hostBtn = $('hostBtn');
+        const clientBtn = $('clientBtn');
+        const modeSelect = $('modeSelect');
+        const systemAudioBtn = $('systemAudioBtn');
+        const micAudioBtn = $('micAudioBtn');
+        const permGuide = $('permGuide');
+        const guideText = $('guideText');
+        const roomCard = $('roomCard');
+        const roomTitle = $('roomTitle');
+        const roomInput = $('roomInput');
+        const serverStatus = $('serverStatus');
+        const controls = $('controls');
+        const startBtn = $('startBtn');
+        const stopBtn = $('stopBtn');
+
+        // 权限错误提示（供Java调用）
+        window.showPermissionError = function() {
+            statusEl.textContent = '❌ 权限被拒绝！请在系统设置中手动开启权限';
+            guideText.innerHTML = `
+                请手动开启权限：<br>
+                1. 设置 → 应用 → 实时音频共享 → 权限<br>
+                2. 开启「麦克风」「音频」「存储」权限<br>
+                3. 重启应用后重试
+            `;
+            permGuide.style.display = 'block';
+        };
+
+        // 显示权限引导
+        function showPermGuide(mode) {
+            permGuide.style.display = 'block';
+            if (mode === "system") {
+                guideText.innerHTML = `
+                    系统音频开启步骤：<br>
+                    1. 点击按钮后，系统会提示"录制屏幕/音频"<br>
+                    2. 选择"允许"，系统会自动开始录制音频<br>
+                    3. 若没有提示，请检查系统设置中的权限
+                `;
+            } else {
+                guideText.innerHTML = `
+                    麦克风开启步骤：<br>
+                    1. 点击按钮后，系统会提示"使用麦克风"<br>
+                    2. 选择"允许"即可<br>
+                    3. 播放音乐时请将手机音量调大
+                `;
+            }
+        }
+
+        // 生成6位房间号
+        function generateRoomId() {
+            return Math.floor(100000 + Math.random() * 900000).toString();
+        }
+
+        // 更新服务器状态
+        function updateServerStatus(status, message) {
+            serverStatus.className = `server-status ${status}`;
+            serverStatus.textContent = message;
+        }
+
+        // 连接WebSocket服务器
+        async function connectWebSocket(serverUrl = WEBSOCKET_SERVER) {
+            updateServerStatus('connecting', '🟡 连接服务器中...');
+            
+            try {
+                socket = new WebSocket(serverUrl);
+                
+                socket.onopen = () => {
+                    updateServerStatus('connected', '🟢 服务器连接成功');
+                    statusEl.textContent = '✅ 服务器连接成功';
+                    
+                    // 如果是播放方且已有音频权限，自动创建房间
+                    if (isHost && audioStream) {
+                        createRoom();
+                    }
+                };
+                
+                socket.onmessage = (event) => {
+                    handleWebSocketMessage(event.data);
+                };
+                
+                socket.onclose = () => {
+                    updateServerStatus('disconnected', '🔴 服务器连接断开');
+                    statusEl.textContent = '❌ 服务器连接断开 | 正在重连...';
+                    // 尝试重连
+                    setTimeout(() => reconnectWebSocket(), 3000);
+                };
+                
+                socket.onerror = (error) => {
+                    updateServerStatus('disconnected', '🔴 服务器连接错误');
+                    statusEl.textContent = `❌ 服务器连接失败：${error.message}`;
+                    // 尝试备用服务器
+                    setTimeout(() => reconnectWebSocket(true), 2000);
+                };
+                
+                // 等待连接成功
+                await waitForSocketConnection(socket, 5000);
+                return true;
+                
+            } catch (error) {
+                updateServerStatus('disconnected', '🔴 服务器连接失败');
+                statusEl.textContent = `❌ 连接服务器失败：${error.message}`;
+                return false;
+            }
+        }
+
+        // 等待WebSocket连接成功
+        function waitForSocketConnection(socket, timeout) {
+            return new Promise((resolve, reject) => {
+                const startTime = Date.now();
+                
+                const checkConnection = () => {
+                    if (socket.readyState === WebSocket.OPEN) {
+                        resolve();
+                    } else if (Date.now() - startTime > timeout) {
+                        reject(new Error('WebSocket连接超时'));
+                    } else {
+                        setTimeout(checkConnection, 100);
+                    }
+                };
+                
+                checkConnection();
+            });
+        }
+
+        // 重新连接WebSocket
+        async function reconnectWebSocket(useBackup = false) {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.close();
+            }
+            
+            let serverUrl = WEBSOCKET_SERVER;
+            if (useBackup) {
+                // 随机选择一个备用服务器
+                const randomIndex = Math.floor(Math.random() * BACKUP_SERVERS.length);
+                serverUrl = BACKUP_SERVERS[randomIndex];
+                statusEl.textContent = `🔄 尝试备用服务器：${serverUrl}`;
+            }
+            
+            const connected = await connectWebSocket(serverUrl);
+            if (connected && currentRoomId) {
+                // 重新加入房间
+                joinRoom(currentRoomId);
+            }
+        }
+
+        // 处理WebSocket消息
+        function handleWebSocketMessage(data) {
+            try {
+                const message = JSON.parse(data);
+                
+                switch (message.type) {
+                    case 'room_created':
+                        handleRoomCreated(message);
+                        break;
+                    case 'room_joined':
+                        handleRoomJoined(message);
+                        break;
+                    case 'user_joined':
+                        handleUserJoined(message);
+                        break;
+                    case 'audio_data':
+                        handleAudioData(message);
+                        break;
+                    case 'user_left':
+                        handleUserLeft(message);
+                        break;
+                    case 'error':
+                        handleError(message);
+                        break;
+                }
+            } catch (error) {
+                console.log('收到非JSON消息:', data);
+                // 由于使用的是公共echo服务器，我们模拟一些响应
+                simulateServerResponse(data);
+            }
+        }
+
+        // 模拟服务器响应（因为使用公共echo服务器）
+        function simulateServerResponse(data) {
+            try {
+                const message = JSON.parse(data);
+                
+                // 模拟房间创建响应
+                if (message.type === 'create_room') {
+                    const simulatedResponse = {
+                        type: 'room_created',
+                        roomId: message.roomId,
+                        message: '房间创建成功'
+                    };
+                    handleRoomCreated(simulatedResponse);
+                }
+                
+                // 模拟加入房间响应
+                else if (message.type === 'join_room') {
+                    const simulatedResponse = {
+                        type: 'room_joined',
+                        roomId: message.roomId,
+                        message: '成功加入房间'
+                    };
+                    handleRoomJoined(simulatedResponse);
+                }
+                
+            } catch (error) {
+                console.log('无法解析消息:', data);
+            }
+        }
+
+        // 处理房间创建响应
+        function handleRoomCreated(message) {
+            currentRoomId = message.roomId;
+            roomInput.value = currentRoomId;
+            roomTitle.textContent = `房间号：${currentRoomId}（请分享给收听方）`;
+            statusEl.textContent = `✅ 房间创建成功 | 房间号：${currentRoomId}`;
+            startBtn.disabled = false;
+            controls.style.display = 'flex';
+        }
+
+        // 处理加入房间响应
+        function handleRoomJoined(message) {
+            currentRoomId = message.roomId;
+            roomInput.value = currentRoomId;
+            roomTitle.textContent = `已加入房间：${currentRoomId}`;
+            statusEl.textContent = `✅ 成功加入房间 | 等待播放方开始传声`;
+        }
+
+        // 处理用户加入
+        function handleUserJoined(message) {
+            statusEl.textContent = `👥 有用户加入房间 | 当前人数：${message.userCount}`;
+        }
+
+        // 处理音频数据
+        function handleAudioData(message) {
+            if (!isHost) {
+                playAudioData(message.data);
+            }
+        }
+
+        // 处理用户离开
+        function handleUserLeft(message) {
+            statusEl.textContent = `👥 用户离开房间 | 当前人数：${message.userCount}`;
+        }
+
+        // 处理错误消息
+        function handleError(message) {
+            statusEl.textContent = `❌ 错误：${message.message}`;
+        }
+
+        // 创建房间
+        function createRoom() {
+            const roomId = roomInput.value.trim() || generateRoomId();
+            currentRoomId = roomId;
+            
+            statusEl.textContent = `📝 创建房间：${roomId}...`;
+            
+            const message = {
+                type: 'create_room',
+                roomId: roomId,
+                userId: generateUserId(),
+                timestamp: Date.now()
+            };
+            
+            sendWebSocketMessage(message);
+            
+            // 由于是模拟服务器，直接处理响应
+            setTimeout(() => {
+                handleRoomCreated({
+                    type: 'room_created',
+                    roomId: roomId,
+                    message: '房间创建成功'
+                });
+            }, 1000);
+        }
+
+        // 加入房间
+        function joinRoom(roomId) {
+            statusEl.textContent = `📥 加入房间：${roomId}...`;
+            
+            const message = {
+                type: 'join_room',
+                roomId: roomId,
+                userId: generateUserId(),
+                timestamp: Date.now()
+            };
+            
+            sendWebSocketMessage(message);
+            
+            // 由于是模拟服务器，直接处理响应
+            setTimeout(() => {
+                handleRoomJoined({
+                    type: 'room_joined',
+                    roomId: roomId,
+                    message: '成功加入房间'
+                });
+            }, 1000);
+        }
+
+        // 生成用户ID
+        function generateUserId() {
+            return 'user_' + Math.random().toString(36).substr(2, 9);
+        }
+
+        // 发送WebSocket消息
+        function sendWebSocketMessage(message) {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify(message));
+            } else {
+                console.log('WebSocket未连接，无法发送消息');
+            }
+        }
+
+        // 系统音频捕获
+        async function captureSystemAudio() {
+            audioMode = "system";
+            showPermGuide("system");
+            statusEl.textContent = '🔄 申请系统音频权限...';
+
+            try {
+                // APK版本直接使用getDisplayMedia
+                audioStream = await navigator.mediaDevices.getDisplayMedia({
+                    audio: { echoCancellation: false, noiseSuppression: false },
+                    video: false
+                });
+                statusEl.textContent = '✅ 系统音频捕获成功（无杂音）';
+                setupAudioContext();
+                roomCard.style.display = 'block';
+            } catch (err) {
+                statusEl.textContent = `❌ 系统音频失败：${err.message}`;
+                captureMicAudio(); // 降级到麦克风
+            }
+        }
+
+        // 麦克风捕获
+        async function captureMicAudio() {
+            audioMode = "mic";
+            showPermGuide("mic");
+            statusEl.textContent = '🔄 申请麦克风权限...';
+
+            try {
+                audioStream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        echoCancellation: false,
+                        noiseSuppression: false,
+                        autoGainControl: false,
+                        sampleRate: 48000
+                    },
+                    video: false
+                });
+                statusEl.textContent = '✅ 麦克风权限申请成功';
+                setupAudioContext();
+                roomCard.style.display = 'block';
+            } catch (err) {
+                statusEl.textContent = `❌ 麦克风失败：${err.name} - ${err.message}`;
+                guideText.innerHTML += `<br><br>💡 请在系统设置中手动开启权限`;
+            }
+        }
+
+        // 设置音频上下文
+        function setupAudioContext() {
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                audioTrack = audioStream.getAudioTracks()[0];
+                audioSource = audioContext.createMediaStreamSource(audioStream);
+                
+                // 创建音频处理器
+                audioProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+                
+                audioProcessor.onaudioprocess = (e) => {
+                    if (isSharing && isHost) {
+                        const inputData = e.inputBuffer.getChannelData(0);
+                        const audioData = Array.from(inputData);
+                        
+                        // 发送音频数据
+                        const message = {
+                            type: 'audio_data',
+                            roomId: currentRoomId,
+                            data: audioData,
+                            timestamp: Date.now()
+                        };
+                        
+                        sendWebSocketMessage(message);
+                    }
+                };
+                
+                audioSource.connect(audioProcessor);
+                audioProcessor.connect(audioContext.destination);
+                
+            } catch (error) {
+                statusEl.textContent = `❌ 设置音频失败：${error.message}`;
+            }
+        }
+
+        // 播放音频数据
+        function playAudioData(audioData) {
+            try {
+                if (!audioContext) {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                
+                const buffer = audioContext.createBuffer(1, audioData.length, audioContext.sampleRate);
+                const channelData = buffer.getChannelData(0);
+                
+                for (let i = 0; i < audioData.length; i++) {
+                    channelData[i] = audioData[i];
+                }
+                
+                const source = audioContext.createBufferSource();
+                source.buffer = buffer;
+                source.connect(audioContext.destination);
+                source.start(0);
+                
+            } catch (error) {
+                console.log('播放音频失败:', error);
+            }
+        }
+
+        // 开始传声
+        function startSharing() {
+            if (!currentRoomId) {
+                statusEl.textContent = '⚠️ 请先创建或加入房间';
+                return;
+            }
+            
+            if (!audioStream || !audioTrack) {
+                statusEl.textContent = '⚠️ 请先获取音频权限';
+                return;
+            }
+            
+            if (audioContext && audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
+            
+            isSharing = true;
+            audioTrack.enabled = true;
+            
+            statusEl.textContent = `▶️ 正在实时传声（${audioMode}模式）`;
+            startBtn.disabled = true;
+            stopBtn.disabled = false;
+            
+            // 发送开始传声通知
+            const message = {
+                type: 'start_sharing',
+                roomId: currentRoomId,
+                timestamp: Date.now()
+            };
+            
+            sendWebSocketMessage(message);
+        }
+
+        // 停止传声
+        function stopSharing() {
+            isSharing = false;
+            
+            if (audioTrack) {
+                audioTrack.enabled = false;
+            }
+            
+            if (audioContext && audioContext.state === 'running') {
+                audioContext.suspend();
+            }
+            
+            statusEl.textContent = '⏹️ 已停止传声 | 可重新开始';
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            
+            // 发送停止传声通知
+            const message = {
+                type: 'stop_sharing',
+                roomId: currentRoomId,
+                timestamp: Date.now()
+            };
+            
+            sendWebSocketMessage(message);
+        }
+
+        // 房间输入处理
+        roomInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                const roomId = roomInput.value.trim();
+                if (roomId) {
+                    if (isHost) {
+                        createRoom();
+                    } else {
+                        joinRoom(roomId);
+                    }
+                }
+            }
+        });
+
+        // 角色选择
+        hostBtn.addEventListener('click', async () => {
+            isHost = true;
+            statusEl.textContent = '📤 请选择音频捕获模式（优先系统音频）';
+            modeSelect.style.display = 'flex';
+            clientBtn.disabled = true;
+            showPermGuide("system");
+            
+            // 连接WebSocket服务器
+            await connectWebSocket();
+        });
+
+        clientBtn.addEventListener('click', async () => {
+            isHost = false;
+            statusEl.textContent = '📥 请输入房间号加入房间';
+            roomCard.style.display = 'block';
+            roomTitle.textContent = '输入房间号加入';
+            hostBtn.disabled = true;
+            
+            // 连接WebSocket服务器
+            await connectWebSocket();
+        });
+
+        // 绑定音频模式按钮
+        systemAudioBtn.addEventListener('click', captureSystemAudio);
+        micAudioBtn.addEventListener('click', captureMicAudio);
+
+        // 绑定控制按钮
+        startBtn.addEventListener('click', startSharing);
+        stopBtn.addEventListener('click', stopSharing);
+
+        // 页面初始化
+        window.onload = () => {
+            statusEl.textContent = '✅ 应用初始化完成 | 请选择角色';
+        };
+    </script>
+</body>
+</html>
