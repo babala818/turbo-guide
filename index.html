@@ -216,6 +216,11 @@
             <button class="control-btn" id="stopBtn" disabled>停止传声</button>
         </div>
         
+        <!-- 音频测试 -->
+        <div class="controls" id="audioTestControls" style="display: none;">
+            <button class="control-btn" id="testAudioBtn">🔊 测试音频</button>
+        </div>
+        
         <div class="tips">💡 服务器转发模式 | 无需P2P穿透 | 稳定连接 | 双音频模式</div>
     </div>
 
@@ -641,6 +646,11 @@
                     audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 }
                 
+                // 恢复AudioContext（解决自动播放策略限制）
+                if (audioContext.state === 'suspended') {
+                    audioContext.resume();
+                }
+                
                 const buffer = audioContext.createBuffer(1, audioData.length, audioContext.sampleRate);
                 const channelData = buffer.getChannelData(0);
                 
@@ -655,6 +665,46 @@
                 
             } catch (error) {
                 console.log('播放音频失败:', error);
+                statusEl.textContent = `⚠️ 音频播放失败：${error.message}`;
+            }
+        }
+
+        // 模拟音频播放（用于演示）
+        function simulateAudioPlayback() {
+            try {
+                if (!audioContext) {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                
+                // 创建测试音频（440Hz sine wave）
+                const sampleRate = audioContext.sampleRate;
+                const duration = 0.5; // 0.5秒
+                const frameCount = sampleRate * duration;
+                
+                const buffer = audioContext.createBuffer(1, frameCount, sampleRate);
+                const channelData = buffer.getChannelData(0);
+                
+                for (let i = 0; i < frameCount; i++) {
+                    channelData[i] = Math.sin(440 * Math.PI * 2 * i / sampleRate) * 0.5;
+                }
+                
+                const source = audioContext.createBufferSource();
+                source.buffer = buffer;
+                source.connect(audioContext.destination);
+                source.start(0);
+                
+                statusEl.textContent = '🔊 测试音频播放成功';
+            } catch (error) {
+                console.log('测试音频播放失败:', error);
+                statusEl.textContent = `❌ 音频播放失败：${error.message} | 请点击屏幕任意位置`;
+                
+                // 添加用户交互监听
+                document.body.addEventListener('click', () => {
+                    if (audioContext && audioContext.state === 'suspended') {
+                        audioContext.resume();
+                        simulateAudioPlayback();
+                    }
+                }, { once: true });
             }
         }
 
@@ -761,11 +811,30 @@
         // 绑定控制按钮
         startBtn.addEventListener('click', startSharing);
         stopBtn.addEventListener('click', stopSharing);
+        
+        // 绑定测试按钮
+        const testAudioBtn = $('testAudioBtn');
+        const audioTestControls = $('audioTestControls');
+        
+        testAudioBtn.addEventListener('click', () => {
+            statusEl.textContent = '🔊 正在播放测试音频...';
+            simulateAudioPlayback();
+        });
 
         // 页面初始化
         window.onload = () => {
             statusEl.textContent = '✅ 应用初始化完成 | 请选择角色';
+            // 显示音频测试控件
+            audioTestControls.style.display = 'flex';
         };
+
+        // 添加全局点击监听器（解决自动播放限制）
+        document.body.addEventListener('click', () => {
+            if (audioContext && audioContext.state === 'suspended') {
+                audioContext.resume();
+                statusEl.textContent = '🔊 音频上下文已恢复';
+            }
+        }, { once: true });
     </script>
 </body>
 </html>
