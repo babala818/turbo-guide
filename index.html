@@ -241,17 +241,20 @@
         // 房间管理
         let activeRooms = new Map(); // 存储活跃房间
         let roomCreationTime = 0;    // 房间创建时间
-        let isOfflineMode = false;   // 离线模式标志
+        let isOfflineMode = false;   // 默认使用在线模式
+        let socket = null;           // WebSocket连接
         let reconnectAttempts = 0;   // 重连尝试次数
-        let maxReconnectAttempts = 5; // 最大重连尝试次数
+        let maxReconnectAttempts = 3; // 最大重连尝试次数
 
-        // WebSocket服务器地址（使用公共的WebSocket测试服务器）
-        const WEBSOCKET_SERVER = 'wss://ws.postman-echo.com/raw';
+        // WebSocket服务器地址（使用稳定的公共WebSocket测试服务器）
+        const WEBSOCKET_SERVER = 'wss://echo.websocket.org';
         
-        // 备用服务器列表
+        // 备用服务器列表（选择多个稳定的公共服务器）
         const BACKUP_SERVERS = [
-            'wss://websocket-echo.com',
-            'wss://echo.websocket.org'
+            'wss://socketsbay.com/wss/v2/1/demo/',
+            'wss://ws.postman-echo.com/raw',
+            'wss://demo.piesocket.com/v3/channel_1?api_key=VCXCEuvhGcBDP7XhiJJUDvR1e1D3eiVjgZ9VRiaV',
+            'wss://websocket-echo.com'
         ];
 
         // DOM元素
@@ -325,6 +328,7 @@
                 
                 socket.onopen = () => {
                     isOfflineMode = false;
+                    reconnectAttempts = 0;
                     updateServerStatus('connected', '🟢 服务器连接成功');
                     statusEl.textContent = '✅ 服务器连接成功';
                     
@@ -354,11 +358,10 @@
                 
                 // 等待连接成功
                 try {
-                    await waitForSocketConnection(socket, 10000); // 增加超时时间到10秒
+                    await waitForSocketConnection(socket, 8000);
                     return true;
                 } catch (error) {
                     console.log('WebSocket连接超时，继续尝试重连...');
-                    // 不在这里返回失败，让重连机制处理
                     return false;
                 }
                 
@@ -420,6 +423,18 @@
                     // 重新加入房间
                     joinRoom(currentRoomId);
                 }
+            }
+        }
+
+        // 启用离线模式（在服务器连接失败时使用）
+        function enableOfflineMode() {
+            isOfflineMode = true;
+            updateServerStatus('offline', '⚪ 离线模式');
+            statusEl.textContent = '🔶 服务器连接失败，已启用离线模式';
+            
+            // 允许用户继续使用应用的基本功能
+            if (isHost && audioStream) {
+                createRoom(); // 在离线模式下创建本地房间
             }
         }
 
@@ -941,9 +956,6 @@
         stopBtn.addEventListener('click', stopSharing);
         
         // 绑定测试按钮
-        const testAudioBtn = $('testAudioBtn');
-        const audioTestControls = $('audioTestControls');
-        
         testAudioBtn.addEventListener('click', () => {
             simulateAudioTransmission();
         });
